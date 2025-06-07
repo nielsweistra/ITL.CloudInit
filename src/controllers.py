@@ -3,6 +3,7 @@ import binascii
 import json
 import os
 import subprocess
+from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
