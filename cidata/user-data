@@ -1,0 +1,58 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  - gnupg
+  - ca-certificates
+  - net-tools
+
+write_files:
+  - path: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+  - path: /etc/sysctl.d/k8s.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+runcmd:
+  - swapoff -a
+  - sudo sed -i.bak 's|^\s*/swap.img|#/swap.img|' /etc/fstab
+  - free -h
+  # Load kernel modules
+  - modprobe overlay
+  - modprobe br_netfilter
+
+  # Apply sysctl params
+  - sysctl --system
+
+  # Remove existing containerd and kube tools
+  - apt-get remove -y containerd
+  - apt-get remove -y kubelet kubeadm kubectl || true
+
+  # Install containerd v1.7.27
+  - curl -LO https://github.com/containerd/containerd/releases/download/v1.7.27/containerd-1.7.27-linux-amd64.tar.gz
+  - tar -C /usr/local -xzf containerd-1.7.27-linux-amd64.tar.gz
+  - curl -o /etc/systemd/system/containerd.service https://raw.githubusercontent.com/containerd/containerd/v1.7.27/containerd.service
+  - mkdir -p /etc/containerd
+  - containerd config default > /etc/containerd/config.toml
+  - sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+  - systemctl daemon-reexec
+  - systemctl daemon-reload
+  - systemctl enable --now containerd
+
+  # Add Kubernetes APT repo and install components
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+  - apt-get update
+  - apt install -y docker.io
+  - apt-get install -y kubelet=1.30.13-1.1 kubeadm=1.30.13-1.1 kubectl=1.30.13-1.1
+  - apt-mark hold kubelet kubeadm kubectl
+
+  # Join Kubernetes cluster (replace token/hash before use!)
+  - kubeadm join 10.99.100.4:6443 --token wnmoqh.bvd3b81qfbcutqxs --discovery-token-ca-cert-hash sha256:a48d5689259e6032503f275568190216b093043f7ebb7479525036adce8db9de
